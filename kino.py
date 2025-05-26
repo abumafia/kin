@@ -103,7 +103,7 @@ def webhook():
 
 if __name__ == "__main__":
     # Webhook URL ni o'zgartiring (Sizning domeningiz)
-    WEBHOOK_URL = 'https://SIZNING_DOMEN/renderda_yaratilgan_url/webhook/' + API_TOKEN
+    WEBHOOK_URL = 'https://kin-r12q.onrender.com/webhook/' + API_TOKEN
 
     # Telegram botga webhookni o'rnatamiz
     bot.remove_webhook()
