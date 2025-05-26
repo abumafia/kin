@@ -2,41 +2,34 @@ import telebot
 from telebot import types
 import sqlite3
 import logging
-from flask import Flask, request, abort
 
-API_TOKEN = '8033496372:AAHXsgkyxXq-5ohiH6Gao355ZefY9Vxr0Xc'  # Muhit o'zgaruvchi sifatida olib ishlatish tavsiya qilinadi
+API_TOKEN = '8033496372:AAHXsgkyxXq-5ohiH6Gao355ZefY9Vxr0Xc'
 ADMIN_ID = 6606638731
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 bot = telebot.TeleBot(API_TOKEN)
-app = Flask(__name__)
 
 def get_db_connection():
-    # Har so'rov uchun alohida ulanish (thread-safe)
     conn = sqlite3.connect("kinolar.db")
     conn.row_factory = sqlite3.Row
     return conn
 
-@app.route("/", methods=["GET"])
-def index():
-    return "Bot ishlayapti ✅"
-
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = types.KeyboardButton('/add (faqat admin uchun)')  # Kino qo'shish uchun admin komandasi
+    btn1 = types.KeyboardButton('/add')
     markup.add(btn1)
-    bot.send_message(message.chat.id, "Salom! Kinolarni qidirish uchun Kodlardan foydalaning: misol: ```123abc```", reply_markup=markup)
+    bot.send_message(message.chat.id, "Salom! Kinolarni qidirish uchun kod yuboring. Misol: `123abc`", parse_mode="Markdown", reply_markup=markup)
 
 @bot.message_handler(commands=['add'])
 def add_kino(message):
     if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ Sizda bu komanda uchun ruxsat yo'q.")
+        bot.send_message(message.chat.id, "❌ Sizda ruxsat yo'q.")
         return
     bot.send_message(message.chat.id,
-                     "🎥 Kino videosini yuboring. Caption format:\n\n<code>kod|nom|tavsif|muallif|manba</code>",
-                     parse_mode="HTML")
+                     "🎥 Kino videosini yuboring. Caption format:\n\n`kod|nom|tavsif|muallif|manba`",
+                     parse_mode="Markdown")
 
 @bot.message_handler(content_types=['video'])
 def save_video(message):
@@ -44,15 +37,15 @@ def save_video(message):
         return
     if not message.caption or '|' not in message.caption:
         bot.send_message(message.chat.id,
-                         "❌ Format noto‘g‘ri. To‘g‘ri format:\n<code>kod|nom|tavsif|muallif|manba</code>",
-                         parse_mode="HTML")
+                         "❌ Format noto‘g‘ri. To‘g‘ri format:\n`kod|nom|tavsif|muallif|manba`",
+                         parse_mode="Markdown")
         return
     try:
         parts = message.caption.split('|')
         if len(parts) != 5:
             bot.send_message(message.chat.id,
-                             "❌ Format noto‘g‘ri. To‘g‘ri format:\n<code>kod|nom|tavsif|muallif|manba</code>",
-                             parse_mode="HTML")
+                             "❌ Format noto‘g‘ri. To‘g‘ri format:\n`kod|nom|tavsif|muallif|manba`",
+                             parse_mode="Markdown")
             return
 
         kod, nom, tavsif, muallif, manba = [p.strip() for p in parts]
@@ -100,7 +93,7 @@ def get_kino(message):
 @bot.message_handler(commands=['delete'])
 def delete_kino(message):
     if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ Sizda bu komanda uchun ruxsat yo'q.")
+        bot.send_message(message.chat.id, "❌ Sizda ruxsat yo'q.")
         return
     bot.send_message(message.chat.id, "🗑 Qaysi kodga ega kinoni o‘chirmoqchisiz?")
     bot.register_next_step_handler(message, confirm_delete)
@@ -118,85 +111,10 @@ def confirm_delete(message):
         bot.send_message(message.chat.id, "❌ Bunday kod topilmadi.")
     conn.close()
 
-@bot.message_handler(commands=['elon'])
-def ask_elon_type(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ Sizda bu komanda uchun ruxsat yo'q.")
-        return
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🖼 Rasm bilan", "🎥 Video bilan", "✉️ Faqat matn")
-    bot.send_message(message.chat.id, "📢 Qanday turdagi e'lon yubormoqchisiz?", reply_markup=markup)
-    bot.register_next_step_handler(message, get_elon_data)
+# Endi e'lon funksiyalarini ham shunga moslab qo'yish kerak (register_next_step_handler ishlatgan joylari)
 
-def get_elon_data(message):
-    tip = message.text
-    if tip == "🖼 Rasm bilan":
-        bot.send_message(message.chat.id, "🖼 Rasm va caption yuboring.\nFormat:\n`Matn|Tugma matni|Havola`", parse_mode="Markdown")
-        bot.register_next_step_handler(message, handle_elon_photo)
-    elif tip == "🎥 Video bilan":
-        bot.send_message(message.chat.id, "🎥 Video va caption yuboring.\nFormat:\n`Matn|Tugma matni|Havola`", parse_mode="Markdown")
-        bot.register_next_step_handler(message, handle_elon_video)
-    elif tip == "✉️ Faqat matn":
-        bot.send_message(message.chat.id, "✍️ Matn, tugma matni va havola yuboring:\n`Matn|Tugma matni|Havola`", parse_mode="Markdown")
-        bot.register_next_step_handler(message, handle_elon_text)
-    else:
-        bot.send_message(message.chat.id, "❌ Noto‘g‘ri tanlov.")
-
-def parse_caption(caption):
-    parts = caption.split("|")
-    if len(parts) != 3:
-        return None, None, None
-    return parts[0].strip(), parts[1].strip(), parts[2].strip()
-
-def handle_elon_photo(message):
-    if not message.photo or not message.caption:
-        bot.send_message(message.chat.id, "❌ Iltimos rasm va caption yuboring.")
-        return
-    text, btn_text, url = parse_caption(message.caption)
-    if not text:
-        bot.send_message(message.chat.id, "❌ Format noto‘g‘ri.")
-        return
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(btn_text, url=url))
-    bot.send_photo(message.chat.id, message.photo[-1].file_id, caption=text, parse_mode="HTML", reply_markup=markup)
-
-def handle_elon_video(message):
-    if not message.video or not message.caption:
-        bot.send_message(message.chat.id, "❌ Iltimos video va caption yuboring.")
-        return
-    text, btn_text, url = parse_caption(message.caption)
-    if not text:
-        bot.send_message(message.chat.id, "❌ Format noto‘g‘ri.")
-        return
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(btn_text, url=url))
-    bot.send_video(message.chat.id, message.video.file_id, caption=text, parse_mode="HTML", reply_markup=markup)
-
-def handle_elon_text(message):
-    text, btn_text, url = parse_caption(message.text)
-    if not text:
-        bot.send_message(message.chat.id, "❌ Format noto‘g‘ri.")
-        return
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(btn_text, url=url))
-    bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=markup)
-
-@app.route('/webhook/' + API_TOKEN, methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        abort(403)
+# Bu yerda webhook qismi olib tashlandi, bot.polling() ishlatilmoqda
 
 if __name__ == "__main__":
-    # Webhook URL ni o'zgartiring (Sizning domeningiz)
-    WEBHOOK_URL = 'https://kin-r12q.onrender.com/webhook/' + API_TOKEN
-
-    # Telegram botga webhookni o'rnatamiz
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
-
-    app.run(host="0.0.0.0", port=5000)
+    print("Bot ishga tushdi...")
+    bot.infinity_polling()
