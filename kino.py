@@ -12,6 +12,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 bot = telebot.TeleBot(API_TOKEN)
 app = Flask(__name__)
 
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot ishlayapti ✅"
+
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
