@@ -12,21 +12,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 bot = telebot.TeleBot(API_TOKEN)
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def index():
-    return "Bot ishlayapti ✅"
-
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = types.KeyboardButton('/add (faqat admin uchun)')       # Kino qo'shish uchun admin komandasi
-    markup.add(btn1)
-    bot.send_message(message.chat.id, "Salom! Kinolarni qidirish uchun Kodlardan foydalaning: misol: ```123abc```", reply_markup=markup)
-
-# Baza ulanish (global)
+# Baza ulanish (global, thread-safe uchun check_same_thread=False)
 conn = sqlite3.connect("kinolar.db", check_same_thread=False)
 
-# Jadvalni yaratish (faqat bir marta)
+# Jadval yaratish (agar mavjud bo'lmasa)
 with conn:
     conn.execute('''CREATE TABLE IF NOT EXISTS kinolar (
         kod TEXT PRIMARY KEY,
@@ -37,51 +26,67 @@ with conn:
         fayl_id TEXT
     )''')
 
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot ishlayapti ✅"
+
+# /start va /help komandalariga javob
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn1 = types.KeyboardButton('/add')  # faqat admin uchun kino qo'shish komandasi
+    markup.add(btn1)
+    bot.send_message(message.chat.id,
+                     "Salom! Kinolarni qidirish uchun kodni yuboring. Misol: `123abc`",
+                     reply_markup=markup, parse_mode="Markdown")
+
+# Kino qo'shish komandasi (faqat admin)
 @bot.message_handler(commands=['add'])
 def add_kino(message):
     if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "❌ Sizda bu komandani ishlatish huquqi yo'q.")
         return
     bot.send_message(message.chat.id,
-                     "🎥 Kino videosini yuboring. Caption format:\n\n<code>kod|nom|tavsif|muallif|manba</code>",
-                     parse_mode="HTML")
+                     "🎥 Kino videosini yuboring. Caption format:\n`kod|nom|tavsif|muallif|manba`",
+                     parse_mode="Markdown")
 
+# Video qabul qilish va bazaga saqlash (faqat admin)
 @bot.message_handler(content_types=['video'])
 def save_video(message):
     if message.from_user.id != ADMIN_ID:
         return
     if not message.caption or '|' not in message.caption:
         bot.send_message(message.chat.id,
-                         "❌ Format noto‘g‘ri. To‘g‘ri format:\n<code>kod|nom|tavsif|muallif|manba</code>",
-                         parse_mode="HTML")
+                         "❌ Format noto‘g‘ri. To‘g‘ri format:\n`kod|nom|tavsif|muallif|manba`",
+                         parse_mode="Markdown")
         return
+    parts = message.caption.split('|')
+    if len(parts) != 5:
+        bot.send_message(message.chat.id,
+                         "❌ Format noto‘g‘ri. To‘g‘ri format:\n`kod|nom|tavsif|muallif|manba`",
+                         parse_mode="Markdown")
+        return
+    kod, nom, tavsif, muallif, manba = [p.strip() for p in parts]
+    fayl_id = message.video.file_id
     try:
-        parts = message.caption.split('|')
-        if len(parts) != 5:
-            bot.send_message(message.chat.id,
-                             "❌ Format noto‘g‘ri. To‘g‘ri format:\n<code>kod|nom|tavsif|muallif|manba</code>",
-                             parse_mode="HTML")
-            return
-
-        kod, nom, tavsif, muallif, manba = [p.strip() for p in parts]
-        fayl_id = message.video.file_id
-
         with conn:
             conn.execute("INSERT INTO kinolar VALUES (?, ?, ?, ?, ?, ?)",
                          (kod, nom, tavsif, muallif, manba, fayl_id))
         logging.info(f"Kino saqlandi: kod={kod}, nom={nom}")
         bot.send_message(message.chat.id, "✅ Kino muvaffaqiyatli saqlandi.")
+    except sqlite3.IntegrityError:
+        bot.send_message(message.chat.id, "❌ Bu kod oldin mavjud. Iltimos boshqasini tanlang.")
     except Exception as e:
         logging.error(f"Kino qo‘shishda xatolik: {e}")
-        bot.send_message(message.chat.id,
-                         "❌ Xatolik. Ehtimol kod allaqachon mavjud yoki boshqa muammo bor.")
+        bot.send_message(message.chat.id, "❌ Xatolik yuz berdi.")
 
+# Kino qidirish — foydalanuvchi xabar yuborganida kod bo'lsa, kinoni qaytarish
 @bot.message_handler(func=lambda m: True)
 def get_kino(message):
     kod = message.text.strip()
     try:
-        with conn:
-            cur = conn.execute("SELECT * FROM kinolar WHERE kod=?", (kod,))
-            kino = cur.fetchone()
+        cur = conn.execute("SELECT * FROM kinolar WHERE kod=?", (kod,))
+        kino = cur.fetchone()
         if kino:
             _, nom, tavsif, muallif, manba, fayl_id = kino
             caption = f"🎬 <b>{nom}</b>\n📝 {tavsif}\n👤 {muallif}\n🌐 {manba}"
@@ -94,18 +99,19 @@ def get_kino(message):
         logging.error(f"Kino olishda xatolik: {e}")
         bot.send_message(message.chat.id, "❌ Ma'lumot olishda xatolik yuz berdi.")
 
+# Kino o'chirish komandasi (faqat admin)
 @bot.message_handler(commands=['delete'])
 def delete_kino(message):
     if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "❌ Sizda bu komandani ishlatish huquqi yo'q.")
         return
     bot.send_message(message.chat.id, "🗑 Qaysi kodga ega kinoni o‘chirmoqchisiz?")
     bot.register_next_step_handler(message, confirm_delete)
 
 def confirm_delete(message):
     kod = message.text.strip()
-    with conn:
-        cur = conn.execute("SELECT * FROM kinolar WHERE kod=?", (kod,))
-        kino = cur.fetchone()
+    cur = conn.execute("SELECT * FROM kinolar WHERE kod=?", (kod,))
+    kino = cur.fetchone()
     if kino:
         with conn:
             conn.execute("DELETE FROM kinolar WHERE kod=?", (kod,))
@@ -113,11 +119,13 @@ def confirm_delete(message):
     else:
         bot.send_message(message.chat.id, "❌ Bunday kod topilmadi.")
 
+# E'lon yuborish komandasi (faqat admin)
 @bot.message_handler(commands=['elon'])
 def ask_elon_type(message):
     if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "❌ Sizda bu komandani ishlatish huquqi yo'q.")
         return
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add("🖼 Rasm bilan", "🎥 Video bilan", "✉️ Faqat matn")
     bot.send_message(message.chat.id, "📢 Qanday turdagi e'lon yubormoqchisiz?", reply_markup=markup)
     bot.register_next_step_handler(message, get_elon_data)
@@ -167,7 +175,7 @@ def handle_elon_video(message):
     bot.send_video(message.chat.id, message.video.file_id, caption=text, parse_mode="HTML", reply_markup=markup)
 
 def handle_elon_text(message):
-    text, btn_text, url = parse_caption(message.text)
+    text, btn_text, url = parse_caption(message.text or "")
     if not text:
         bot.send_message(message.chat.id, "❌ Format noto‘g‘ri.")
         return
@@ -175,7 +183,7 @@ def handle_elon_text(message):
     markup.add(types.InlineKeyboardButton(btn_text, url=url))
     bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=markup)
 
-# Flask endpoint webhook uchun
+# Flask webhook endpoint
 @app.route('/webhook/' + API_TOKEN, methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -187,10 +195,9 @@ def webhook():
         abort(403)
 
 if __name__ == "__main__":
-    # Webhook URL ni o'zgartiring (Sizning domeningiz)
+    # Webhook URL ni o'zgartiring (o'zingizning domeningiz bilan)
     WEBHOOK_URL = 'https://kin-r12q.onrender.com/webhook/' + API_TOKEN
 
-    # Telegram botga webhookni o'rnatamiz
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
 
